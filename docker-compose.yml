@@ -1,0 +1,50 @@
+# Local development stack. Values come from ./.env (copy .env.example first).
+#   docker compose up --build
+# Reset the database (re-runs db/init on next start):
+#   docker compose down -v
+
+name: cdss
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CDSS_DB_NAME:-cdss}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      # Consumed by db/init/03_app_user.sh to create the read-only app login.
+      CDSS_DB_USER: ${CDSS_DB_USER:-cdss_app}
+      CDSS_DB_PASSWORD: ${CDSS_DB_PASSWORD:?set CDSS_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    image: cdss-agent:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # Inside the compose network the DB is reachable by service name, without TLS.
+      CDSS_DB_HOST: db
+      CDSS_DB_PORT: "5432"
+      CDSS_DB_SSL_MODE: disable
+      CDSS_APP_ENV: local
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
